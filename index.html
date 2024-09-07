@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trivia de Motos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js" type="module"></script>
+    <style>
+        .star-rating { font-size: 2rem; }
+        .star-rating .star { color: #ddd; }
+        .star-rating .star.active { color: #ffc107; }
+        .option-button { transition: all 0.3s ease; }
+        .option-button.correct { background-color: #4CAF50; color: white; }
+        .option-button.incorrect { background-color: #F44336; color: white; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+    <div class="container mx-auto p-4 bg-white rounded-lg shadow-lg max-w-2xl">
+        <img src="https://www.galgo.com/wp-content/uploads/2023/02/cropped-Galgo-2.png" alt="Galgo Logo" class="mx-auto mb-4 h-16">
+        <h1 class="text-3xl font-bold mb-4 text-center">Trivia de Motos</h1>
+        <div id="game-container">
+            <div id="question-container" class="mb-4">
+                <img id="moto-image" src="" alt="Moto" class="w-full h-64 object-cover mb-4 rounded-lg">
+                <h2 id="question" class="text-xl font-semibold mb-2">Cargando pregunta...</h2>
+                <div id="options" class="space-y-2">
+                    <!-- Las opciones se generarán dinámicamente -->
+                </div>
+            </div>
+            <div id="progress" class="mb-4 text-center">Pregunta <span id="current-question">1</span> de 7</div>
+            <div id="score-container" class="hidden text-center">
+                <h2 class="text-2xl font-bold mb-2">Puntuación Final</h2>
+                <div class="star-rating">
+                    <span class="star">★</span>
+                    <span class="star">★</span>
+                    <span class="star">★</span>
+                    <span class="star">★</span>
+                    <span class="star">★</span>
+                </div>
+                <p id="final-score" class="text-xl mt-2">Tu puntuación: <span id="score">0</span> de 7</p>
+                <form id="nickname-form" class="mt-4">
+                    <input type="text" id="nickname" placeholder="Ingresa tu nickname" class="p-2 border rounded">
+                    <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Guardar puntaje</button>
+                </form>
+                <button id="restart-btn" class="mt-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Jugar de nuevo</button>
+            </div>
+        </div>
+        <button id="show-ranking-btn" class="mt-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Ver Ranking</button>
+        <div id="ranking-container" class="mt-4 hidden">
+            <h3 class="text-xl font-bold mb-2">Ranking</h3>
+            <ul id="ranking-list" class="list-decimal list-inside"></ul>
+        </div>
+    </div>
+
+    <script type="module">
+        // Configuración de Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyBirjPd4aOo7z_HmDW9zjzSsBI5kbAdJmg",
+            authDomain: "juego-motos.firebaseapp.com",
+            projectId: "juego-motos",
+            storageBucket: "juego-motos.appspot.com",
+            messagingSenderId: "726670389602",
+            appId: "1:726670389602:web:7c725ead23055d48b17c3b"
+        };
+
+        // Inicializar Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // Tu código existente comienza aquí
+        let motosData = [];
+        let currentQuestion = 0;
+        let score = 0;
+        let questions = [];
+        let currentMoto;
+
+        function cleanModelName(modelName, marca) {
+            // Eliminar el año y la marca del nombre del modelo
+            let cleanName = modelName.split(' ');
+            // Eliminar el último elemento si es un año
+            if (/^\d{4}$/.test(cleanName[cleanName.length - 1])) {
+                cleanName.pop();
+            }
+            // Eliminar el primer elemento si es la marca
+            if (cleanName[0].toLowerCase() === marca.toLowerCase()) {
+                cleanName.shift();
+            }
+            return cleanName.join(' ');
+        }
+
+        console.log("Iniciando carga de datos CSV...");
+        fetch('https://elfrioscl.github.io/juego-motos/motos_data.csv')
+            .then(response => {
+                console.log("Respuesta recibida:", response.status);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.text();
+            })
+            .then(csv => {
+                console.log("CSV recibido, iniciando parsing...");
+                Papa.parse(csv, {
+                    header: true,
+                    skipEmptyLines: true,
+                    complete: function(results) {
+                        console.log("Parsing completo. Número total de filas:", results.data.length);
+                        motosData = results.data.filter(moto => 
+                            moto.URL && moto.Modelo && moto.Marca && moto.ImagenURL &&
+                            moto.Modelo !== 'NaN' && moto.Marca !== 'NaN' && moto.ImagenURL !== 'NaN'
+                        );
+                        console.log("Datos filtrados. Número de motos válidas:", motosData.length);
+                        if (motosData.length > 0) {
+                            startGame();
+                        } else {
+                            console.error("No se encontraron datos válidos de motos");
+                            document.getElementById('question').textContent = "Error: No se pudieron cargar los datos del juego.";
+                        }
+                    }
+                });
+            })
+            .catch(e => {
+                console.error('Hubo un problema con la operación fetch:', e);
+                document.getElementById('question').textContent = "Error: No se pudo cargar el juego. Por favor, intenta más tarde.";
+            });
+
+        function selectRandomMotos(n) {
+            let shuffled = [...motosData].sort(() => 0.5 - Math.random());
+            return shuffled.slice(0, n);
+        }
+
+        function generateQuestions() {
+            console.log("Generando preguntas...");
+            let selectedMotos = selectRandomMotos(7);
+            questions = selectedMotos.map((moto, index) => {
+                let questionType = index % 3;
+                switch(questionType) {
+                    case 0: // Pregunta sobre el modelo
+                        let sameMarkMotos = motosData.filter(m => m.Marca === moto.Marca && m.Modelo !== moto.Modelo);
+                        let otherMarkMotos = motosData.filter(m => m.Marca !== moto.Marca);
+                        let option1 = sameMarkMotos.length > 0 ? sameMarkMotos[Math.floor(Math.random() * sameMarkMotos.length)] : otherMarkMotos[Math.floor(Math.random() * otherMarkMotos.length)];
+                        let option2 = sameMarkMotos.length > 1 ? sameMarkMotos[Math.floor(Math.random() * sameMarkMotos.length)] : otherMarkMotos[Math.floor(Math.random() * otherMarkMotos.length)];
+                        return {
+                            moto: moto,
+                            question: `¿Cuál es el nombre del modelo de esta moto ${moto.Marca}?`,
+                            options: [
+                                cleanModelName(moto.Modelo, moto.Marca),
+                                cleanModelName(option1.Modelo, option1.Marca),
+                                cleanModelName(option2.Modelo, option2.Marca)
+                            ],
+                            correctAnswer: 0
+                        };
+                    case 1: // Pregunta sobre la marca
+                        let otherMarks = motosData.filter(m => m.Marca !== moto.Marca);
+                        let randomMark1 = otherMarks[Math.floor(Math.random() * otherMarks.length)].Marca;
+                        let randomMark2 = otherMarks[Math.floor(Math.random() * otherMarks.length)].Marca;
+                        return {
+                            moto: moto,
+                            question: `¿Cuál es la marca de esta moto?`,
+                            options: [randomMark1, moto.Marca, randomMark2],
+                            correctAnswer: 1
+                        };
+                    case 2: // Pregunta sobre el año
+                        let year = parseInt(moto.Modelo.split(' ').pop());
+                        return {
+                            moto: moto,
+                            question: `¿En qué año se fabricó este modelo ${cleanModelName(moto.Modelo, moto.Marca)}?`,
+                            options: [year - 1, year, year + 1],
+                            correctAnswer: 1
+                        };
+                }
+            });
+            questions = shuffleArray(questions);
+            console.log("Preguntas generadas:", questions);
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        function loadQuestion() {
+            if (currentQuestion === 0) {
+                generateQuestions();
+            }
+
+            if (currentQuestion >= questions.length) {
+                showResults();
+                return;
+            }
+
+            const questionData = questions[currentQuestion];
+            currentMoto = questionData.moto;
+            
+            const imageElement = document.getElementById('moto-image');
+            imageElement.src = currentMoto.ImagenURL;
+            imageElement.alt = `Imagen de moto`;
+
+            document.getElementById('question').textContent = questionData.question;
+            document.getElementById('current-question').textContent = currentQuestion + 1;
+
+            const optionsContainer = document.getElementById('options');
+            optionsContainer.innerHTML = '';
+            questionData.options.forEach((option, index) => {
+                const button = document.createElement('button');
+                button.textContent = option;
+                button.className = 'option-button w-full p-2 bg-gray-200 rounded hover:bg-gray-300';
+                button.onclick = () => checkAnswer(button, index, questionData.correctAnswer);
+                optionsContainer.appendChild(button);
+            });
+        }
+
+        function checkAnswer(button, selectedIndex, correctAnswer) {
+            const buttons = document.querySelectorAll('.option-button');
+            buttons.forEach(btn => btn.disabled = true);
+
+            if (selectedIndex === correctAnswer) {
+                button.classList.add('correct');
+                score++;
+            } else {
+                button.classList.add('incorrect');
+                buttons[correctAnswer].classList.add('correct');
+            }
+
+            setTimeout(() => {
+                currentQuestion++;
+                loadQuestion();
+            }, 1500);
+        }
+
+        function showResults() {
+            document.getElementById('question-container').style.display = 'none';
+            document.getElementById('progress').style.display = 'none';
+            document.getElementById('score-container').style.display = 'block';
+            document.getElementById('score').textContent = score;
+
+            const stars = document.querySelectorAll('.star');
+            const starRating = Math.round((score / questions.length) * 5);
+            stars.forEach((star, index) => {
+                if (index < starRating) {
+                    star.classList.add('active');
+                }
+            });
+
+            document.getElementById('nickname-form').style.display = 'block';
+        }
+
+        async function saveScore(nickname, score) {
+            try {
+                await addDoc(collection(db, "scores"), {
+                    nickname: nickname,
+                    score: score,
+                    timestamp: new Date()
+                });
+                alert("Puntaje guardado exitosamente!");
+            } catch (e) {
+                console.error("Error al guardar el puntaje: ", e);
+                alert("Hubo un error al guardar el puntaje. Por favor, intenta de nuevo.");
+            }
+        }
+
+        async function loadRanking() {
+            const rankingList = document.getElementById('ranking-list');
+            rankingList.innerHTML = '';
+            const q = query(collection(db, "scores"), orderBy("score", "desc"), limit(10));
+            const querySnapshot = await getDocs(q);
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                const li = document.createElement('li');
+                li.textContent = `${data.nickname}: ${data.score}`;
+                rankingList.appendChild(li);
+            });
+        }
+
+        document.getElementById('nickname-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const nickname = document.getElementById('nickname').value;
+            if (nickname) {
+                await saveScore(nickname, score);
+                loadRanking();
+            } else {
+                alert("Por favor, ingresa un nickname.");
+            }
+        });
+
+        document.getElementById('show-ranking-btn').addEventListener('click', () => {
+            const rankingContainer = document.getElementById('ranking-container');
+            if (rankingContainer.style.display === 'none') {
+                rankingContainer.style.display = 'block';
+                loadRanking();
+            } else {
+                rankingContainer.style.display = 'none';
+            }
+        });
+
+        function startGame() {
+            currentQuestion = 0;
+            score = 0;
+            document.getElementById('question-container').style.display = 'block';
+            document.getElementById('progress').style.display = 'block';
+            document.getElementById('score-container').style.display = 'none';
+            loadQuestion();
+        }
+
+        document.getElementById('restart-btn').addEventListener('click', startGame);
+    </script>
+</body>
+</html>
